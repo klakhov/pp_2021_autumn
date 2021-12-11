@@ -4,6 +4,7 @@
 #include <mpi.h>
 #include <vector>
 #include <random>
+#include <limits>
 
 std::vector<double> getRandomVector(int sz, int min, int max);
 

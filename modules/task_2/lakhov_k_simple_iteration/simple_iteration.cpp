@@ -154,7 +154,7 @@ std::vector<double> parallelCalc(std::vector<std::vector<double>> matrix,
         x_index++;
     }
     std::vector<double> x(size);
-    std::vector<double> old_x(size);
+    std::vector<double> next_x(size);
     std::vector<double> this_x;
 
     for (int i = 0; i < current_amount_of_elems; i += row_size) {
@@ -174,35 +174,57 @@ std::vector<double> parallelCalc(std::vector<std::vector<double>> matrix,
                    x.data(), send_counts.data(), send_offsets.data(),
                    MPI_DOUBLE, MPI_COMM_WORLD);
 
-    old_x = x;
     double epsilon = 0.0001;
-    bool global_stop = false;
+    bool global_stop = 0;
     int step = 0;
     while (!global_stop) {
-        if (step > 0) {
-            MPI_Allgatherv(this_x.data(), this_x.size(), MPI_DOUBLE,
-                           x.data(), send_counts.data(), send_offsets.data(),
-                           MPI_DOUBLE, MPI_COMM_WORLD);
-            global_stop = true;
-            for (int i = 0; i < size - 1; i++) {
-                if (std::abs(old_x[i] - x[i]) > epsilon) {
-                    global_stop = false;
-                }
+        MPI_Bcast(x.data(), size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+        // if (step > 0) {
+        //     MPI_Allgatherv(this_x.data(), this_x.size(), MPI_DOUBLE,
+        //                    x.data(), send_counts.data(), send_offsets.data(),
+        //                    MPI_DOUBLE, MPI_COMM_WORLD);
+        //     old_x = x;
+        // }
+        this_x.assign(send_counts[proc_rank], 0);
+        for (int i = 0; i < send_counts[proc_rank]; i++) {
+            for (int j = i*row_size, x_index=0;
+                    j < i*row_size+row_size-1; j++, x_index++) {
+                    this_x[i] += proc_data[j]*x[x_index];
             }
-            old_x = x;
+            this_x[i] += proc_data[i*row_size+row_size - 1];
         }
 
-        if (!global_stop) {
-            this_x.assign(send_counts[proc_rank], 0);
-            for (int i = 0; i < send_counts[proc_rank]; i++) {
-                for (int j = i*row_size, x_index=0;
-                        j < i*row_size+row_size-1; j++, x_index++) {
-                    this_x[i] += proc_data[j]*x[x_index];
+        MPI_Gatherv(this_x.data(), (int)(this_x.size()), MPI_DOUBLE, next_x.data(),
+                    send_counts.data(), send_offsets.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        if(proc_rank == 0){
+            global_stop = true;
+            for (int j=0; j < size;  j++) {
+                double diff = std::abs(next_x[j] - x[j]);
+                if (diff > epsilon) {
+                    global_stop = 1;
+                    break;
                 }
-                this_x[i] += proc_data[i*row_size+row_size - 1];
             }
+            x = next_x;
         }
+        MPI_Bcast(&global_stop, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
         step++;
+        // double max_error;
+        // double local_max_error = std::numeric_limits<double>::min();
+        // for (int i = send_offsets[proc_rank], j=0; j < (int)(this_x.size()); i++, j++) {
+        //     double diff = std::abs(this_x[j] - x[i]);
+        //     if (diff > local_max_error) {
+        //         local_max_error = diff;
+        //     }
+        // }
+        // MPI_Allreduce(&local_max_error, &max_error, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        // if(max_error < epsilon){
+        //     global_stop = true;
+        //     MPI_Allgatherv(this_x.data(), this_x.size(), MPI_DOUBLE,
+        //                    x.data(), send_counts.data(), send_offsets.data(),
+        //                    MPI_DOUBLE, MPI_COMM_WORLD);
+        // }
     }
     return x;
 }
